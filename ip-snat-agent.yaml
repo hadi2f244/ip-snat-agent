@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ip-snat-agent
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      k8s-app: ip-snat-agent
+  template:
+    metadata:
+      labels:
+        k8s-app: ip-snat-agent
+    spec:
+      hostNetwork: true
+      containers:
+      - name: ip-snat-agent
+        image: hadiazad/ip-snat-agent:v0.0.1
+        securityContext:
+          privileged: false
+          capabilities:
+            add: ["NET_ADMIN", "NET_RAW"]
+        volumeMounts:
+          - name: config
+            mountPath: /etc/config
+      volumes:
+        - name: config
+          configMap:
+            # Note this ConfigMap must be created in the same namespace as the daemon pods - this spec uses kube-system
+            name: ip-snat-agent
+            optional: true
+            items:
+              # The daemon looks for its config in a YAML file at /etc/config/ip-snat-agent
+              - key: config
+                path: ip-snat-agent

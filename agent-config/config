@@ -1,8 +1,4 @@
-nonMasqueradeCIDRs:
-  - 10.0.0.0/8
-  - 172.16.0.0/12
-  - 192.168.0.0/16
-cidrLimit: 64
-masqLinkLocal: false
-masqLinkLocalIPv6: false
+srcCIDR: 10.233.224.0/24
+dstCIDR: 172.16.36.100
+snatIp: 172.16.36.32
 resyncInterval: 60s

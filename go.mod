@@ -1,4 +1,4 @@
-module k8s.io/ip-masq-agent
+module k8s.io/ip-snat-agent
 
 go 1.20
 
