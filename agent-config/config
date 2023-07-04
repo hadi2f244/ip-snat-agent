@@ -1,4 +1,11 @@
-srcCIDR: 10.233.224.0/24
-dstCIDR: 172.16.36.100
-snatIp: 172.16.36.32
+
 resyncInterval: 60s
+rules:
+    - namespace: custom
+      srcCIDR: 10.233.224.0/24
+      dstCIDR: 172.16.36.100
+      snatIp: 172.16.36.32
+    - namespace: custom
+      srcCIDR: 10.233.225.0/24
+      dstCIDR: 172.16.37.100
+      snatIp: 172.16.36.33

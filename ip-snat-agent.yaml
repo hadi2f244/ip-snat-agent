@@ -1,3 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ip-snat-agent
+  namespace: kube-system
+data:
+  config: |
+    resyncInterval: 60s
+    rules:
+        - namespace: custom
+          srcCIDR: 10.233.224.0/24
+          dstCIDR: 172.16.36.100
+          snatIp: 172.16.36.32
+        - namespace: custom
+          srcCIDR: 10.233.225.0/24
+          dstCIDR: 172.16.37.100
+          snatIp: 172.16.36.33
+
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -15,7 +34,7 @@ spec:
       hostNetwork: true
       containers:
       - name: ip-snat-agent
-        image: hadiazad/ip-snat-agent:v0.0.1
+        image: hadiazad/ip-snat-agent:v0.0.2
         securityContext:
           privileged: false
           capabilities:

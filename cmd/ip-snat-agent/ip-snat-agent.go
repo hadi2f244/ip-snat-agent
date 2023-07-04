@@ -36,9 +36,6 @@ import (
 )
 
 const (
-	linkLocalCIDR = "169.254.0.0/16"
-	// RFC 4291
-	linkLocalCIDRIPv6 = "fe80::/10"
 	// path to a yaml or json file
 	configPath = "/etc/config/ip-snat-agent"
 )
@@ -47,23 +44,18 @@ var (
 	// name of nat chain for iptables snat rules
 	snatChain                         utiliptables.Chain
 	snatChainFlag                     = flag.String("masq-chain", "SNAT-POSTROUTING", `Name of nat chain for iptables SNAT rules.`)
-	// noMasqueradeAllReservedRangesFlag = flag.Bool("nomasq-all-reserved-ranges", false, "Whether to disable masquerade for all IPv4 ranges reserved by RFCs.")
-	// enableIPv6                        = flag.Bool("enable-ipv6", false, "Whether to enable IPv6.")
 )
 
-// MasqConfig object
-// type MasqConfig struct {
-// 	NonMasqueradeCIDRs []string `json:"nonMasqueradeCIDRs"`
-// 	CidrLimit          int      `json:"cidrLimit"`
-// 	MasqLinkLocal      bool     `json:"masqLinkLocal"`
-// 	MasqLinkLocalIPv6  bool     `json:"masqLinkLocalIPv6"`
-// 	ResyncInterval     Duration `json:"resyncInterval"`
-// }
 
-type SNATConfig struct {
+type SNATRule struct{
+	Namespace string `yaml:"namespace"`
 	SrcCIDR string `json:"srcCIDR"`
 	DstCIDR string    `json:"dstCIDR"`
 	SNATIp string  `json:"snatIp"`
+}
+
+type SNATConfig struct {
+	SNATRules []SNATRule `json:"snatRules"`
 	ResyncInterval     Duration `json:"resyncInterval"`
 }
 
@@ -85,12 +77,20 @@ func (d *Duration) UnmarshalJSON(json []byte) error {
 	return fmt.Errorf("expected string value for unmarshal to field of type Duration, got %q", s)
 }
 
-// NewMasqConfig returns a SNATConfig with default values
-func NewSNATConfig() *SNATConfig {
-	return &SNATConfig{
+func NewSNATRule() *SNATRule {
+	return &SNATRule{
+		Namespace: "default",
 		SrcCIDR: "0.0.0.0/32",
 		DstCIDR: "0.0.0.0/32",
 		SNATIp: "0.0.0.0/32",
+	}
+}
+
+
+// NewMasqConfig returns a SNATConfig with default values
+func NewSNATConfig() *SNATConfig {
+	return &SNATConfig{
+		SNATRules: []SNATRule{},
 		ResyncInterval:     Duration(60 * time.Second),
 	}
 }
@@ -115,7 +115,7 @@ func NewSNATDaemon(c *SNATConfig) *SNATDaemon {
 func main() {
 	flag.Parse()
 
-	version := "0.0.1"
+	version := "0.0.2"
 	glog.Infof("ip-snat-agent version: %s", version)
 
 	flag.CommandLine.VisitAll(func(f *flag.Flag) {
@@ -177,10 +177,8 @@ func (s *SNATDaemon) syncConfig(fs FileSystem) error {
 	// check if file exists
 	if _, err = fs.Stat(configPath); os.IsNotExist(err) {
 		// file does not exist, use defaults
-		s.config.SrcCIDR = c.SrcCIDR
-		s.config.DstCIDR = c.DstCIDR
-		s.config.SNATIp = c.SNATIp
 		s.config.ResyncInterval = c.ResyncInterval
+		s.config.SNATRules = append(s.config.SNATRules, c.SNATRules...)
 		glog.V(2).Infof("no config file found at %q, using default values", configPath)
 		return nil
 	}
@@ -263,21 +261,10 @@ func (s *SNATDaemon) syncSNATRules() error {
 	writeLine(lines, "*nat")
 	writeLine(lines, utiliptables.MakeChainLine(snatChain)) // effectively flushes masqChain atomically with rule restore
 
-	// // link-local CIDR is always non-masquerade
-	// if !s.config.MasqLinkLocal {
-	// 	writeNonSNATRule(lines, linkLocalCIDR)
-	// }
-
-	// // non-masquerade for user-provided CIDRs
-	// for _, cidr := range s.config.NonMasqueradeCIDRs {
-	// 	if !isIPv6CIDR(cidr) {
-	// 		writeNonMasqRule(lines, cidr)
-	// 	}
-	// }
-
-
-	// masquerade all other traffic that is not bound for a --dst-type LOCAL destination
-	writeSNATRule(lines, s.config.SrcCIDR, s.config.DstCIDR, s.config.SNATIp)
+	// SNAT all other traffic
+	for _,snatRule := range s.config.SNATRules {
+		writeSNATRule(lines, snatRule.Namespace, snatRule.SrcCIDR, snatRule.DstCIDR, snatRule.SNATIp)
+	}
 
 	writeLine(lines, "COMMIT")
 
@@ -306,25 +293,11 @@ func (m *SNATDaemon) ensurePostroutingJump() error {
 	return nil
 }
 
-// func (m *SNATDaemon) ensurePostroutingJumpIPv6() error {
-// 	if _, err := m.ip6tables.EnsureRule(utiliptables.Append, utiliptables.TableNAT, utiliptables.ChainPostrouting,
-// 		"-m", "comment", "--comment", postroutingJumpComment(),
-// 		"-m", "addrtype", "!", "--dst-type", "LOCAL", "-j", string(masqChain)); err != nil {
-// 		return fmt.Errorf("failed to ensure that %s chain %s jumps to MASQUERADE: %v for ipv6", utiliptables.TableNAT, masqChain, err)
-// 	}
-// 	return nil
-// }
+const snatRuleCommentTemplate = `-m comment --comment "ip-snat-agent: outbound traffic is subject to SNAT (kubernetes namespace: %s)"`
 
-// const nonMasqRuleComment = `-m comment --comment "ip-masq-agent: local traffic is not subject to MASQUERADE"`
-
-// func writeNonMasqRule(lines *bytes.Buffer, cidr string) {
-// 	writeRule(lines, utiliptables.Append, masqChain, nonMasqRuleComment, "-d", cidr, "-j", "RETURN")
-// }
-
-const masqRuleComment = `-m comment --comment "ip-snat-agent: outbound traffic is subject to SNAT (must be last in chain)"`
-
-func writeSNATRule(lines *bytes.Buffer, srcCIDR string, dstCIDR string, SNATIp string) {
-	writeRule(lines, utiliptables.Append, snatChain, masqRuleComment,"-s",srcCIDR, "-d", dstCIDR, "-j", "SNAT", "--to", SNATIp)
+func writeSNATRule(lines *bytes.Buffer, namespace string, srcCIDR string, dstCIDR string, SNATIp string) {
+	snatRuleComment := fmt.Sprintf(snatRuleCommentTemplate, namespace)
+	writeRule(lines, utiliptables.Append, snatChain, snatRuleComment, "-s",srcCIDR, "-d", dstCIDR, "-j", "SNAT", "--to", SNATIp)
 }
 
 // Similar syntax to utiliptables.Interface.EnsureRule, except you don't pass a table
@@ -338,18 +311,3 @@ func writeRule(lines *bytes.Buffer, position utiliptables.RulePosition, chain ut
 func writeLine(lines *bytes.Buffer, words ...string) {
 	lines.WriteString(strings.Join(words, " ") + "\n")
 }
-
-// // isIPv6CIDR checks if the provided cidr block belongs to ipv6 family.
-// // If cidr belongs to ipv6 family, return true else it returns false
-// // which means the cidr belongs to ipv4 family
-// func isIPv6CIDR(cidr string) bool {
-// 	ip, _, _ := net.ParseCIDR(cidr)
-// 	return isIPv6(ip.String())
-// }
-
-// // isIPv6 checks if the provided ip belongs to ipv6 family.
-// // If ip belongs to ipv6 family, return true else it returns false
-// // which means the ip belongs to ipv4 family
-// func isIPv6(ip string) bool {
-// 	return net.ParseIP(ip).To4() == nil
-// }
