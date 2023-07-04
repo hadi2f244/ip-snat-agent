@@ -26,9 +26,9 @@ import (
 	"strings"
 	"time"
 
+
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/component-base/logs"
-	"hadi2f244/ip-snat-agent/cmd/ip-snat-agent/testing/fakefs"
 	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
 	utilexec "k8s.io/utils/exec"
 
@@ -158,13 +158,13 @@ func (s *SNATDaemon) Run() {
 func (s *SNATDaemon) osSyncConfig() error {
 	// the fakefs.FileSystem interface allows us to mock the fs from tests
 	// fakefs.DefaultFS implements fakefs.FileSystem using os.Stat and io/ioutil.ReadFile
-	var fs fakefs.FileSystem = fakefs.DefaultFS{}
+	var fs FileSystem = DefaultFS{}
 	return s.syncConfig(fs)
 }
 
 // Syncs the config to the file at ConfigPath, or uses defaults if the file could not be found
 // Error if the file is found but cannot be parsed.
-func (s *SNATDaemon) syncConfig(fs fakefs.FileSystem) error {
+func (s *SNATDaemon) syncConfig(fs FileSystem) error {
 	var err error
 	c := NewSNATConfig()
 	defer func() {
